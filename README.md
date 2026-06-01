@@ -24,6 +24,7 @@
 - 内置本地 SQLite 销售示例数据库
 - 中文业务化界面，便于演示销售数据问答场景
 - 基于 Streamlit 的交互式聊天界面
+- 对接讯飞 Spark 作为大模型后端
 - 本地数据库采用只读连接，降低误操作风险
 
 ## 技术栈
@@ -31,7 +32,7 @@
 - Python
 - Streamlit
 - LangChain
-- OpenAI
+- iFLYTEK Spark API
 - SQLite
 - SQLAlchemy
 
@@ -59,12 +60,19 @@ pip install -r requirements.txt
 
 ### 4. 配置环境变量
 
-创建 `.env` 文件，或在本地环境中配置 OpenAI API Key。
+复制 `.env.example` 为 `.env`，并填写讯飞 Spark 配置：
 
-示例：
+```powershell
+Copy-Item .env.example .env
+```
+
+`.env` 示例：
 
 ```env
-OPENAI_API_KEY=your_api_key_here
+XF_APIKey=your_api_key_here
+XF_APISecret=your_api_secret_here
+XF_MODEL=lite
+XF_URL=https://spark-api-open.xf-yun.com/v1/chat/completions
 ```
 
 ### 5. 启动应用
@@ -90,6 +98,7 @@ streamlit run app.py
 - 将原始英文界面改成中文业务化界面
 - 将默认示例数据库替换为本地销售数据示例库
 - 调整示例问题，使其更贴近销售分析场景
+- 将默认 OpenAI 模型调用改造成讯飞 Spark 模型后端
 
 ## 致谢
 
@@ -98,4 +107,4 @@ streamlit run app.py
 - 原始仓库：<https://github.com/langchain-ai/streamlit-agent>
 - 原始示例文件：`chat_with_sql_db.py`
 
-原项目提供了基础的 SQL Agent 演示能力，本版本重点放在中文业务场景改造和结构化数据问答展示。
+原项目提供了基础的 SQL Agent 演示能力，本版本重点放在中文业务场景改造、讯飞 Spark 接入和结构化数据问答展示。

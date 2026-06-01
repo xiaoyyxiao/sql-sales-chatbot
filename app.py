@@ -1,14 +1,77 @@
+import os
 import sqlite3
 from pathlib import Path
+from typing import Any
 
+import requests
 import streamlit as st
-from langchain.agents import create_sql_agent
-from langchain.agents.agent_toolkits import SQLDatabaseToolkit
-from langchain.agents.agent_types import AgentType
-from langchain.callbacks import StreamlitCallbackHandler
-from langchain.llms.openai import OpenAI
-from langchain.sql_database import SQLDatabase
+from langchain_community.agent_toolkits.sql.base import create_sql_agent
+from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
+from langchain_community.callbacks.streamlit import StreamlitCallbackHandler
+from langchain_community.utilities.sql_database import SQLDatabase
+from langchain_classic.agents.agent_types import AgentType
+from langchain_core.language_models.llms import LLM
 from sqlalchemy import create_engine
+from dotenv import load_dotenv
+
+
+load_dotenv()
+
+
+class SparkLLM(LLM):
+    api_key: str
+    api_secret: str
+    api_url: str = "https://spark-api-open.xf-yun.com/v1/chat/completions"
+    model: str = "lite"
+    temperature: float = 0.0
+
+    @property
+    def _llm_type(self) -> str:
+        return "spark"
+
+    def _call(self, prompt: str, stop: list[str] | None = None, **kwargs: Any) -> str:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}:{self.api_secret}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": self.temperature,
+        }
+
+        try:
+            response = requests.post(
+                self.api_url,
+                headers=headers,
+                json=payload,
+                timeout=60,
+            )
+        except requests.exceptions.RequestException as exc:
+            raise ValueError(f"Failed to reach Spark API: {exc}") from exc
+
+        if response.status_code != 200:
+            raise ValueError(f"Spark API error {response.status_code}: {response.text}")
+
+        result = response.json()
+        if result.get("error"):
+            raise ValueError(str(result["error"]))
+
+        choices = result.get("choices", [])
+        if not choices:
+            raise ValueError("Spark API returned no choices.")
+
+        content = choices[0].get("message", {}).get("content", "")
+        if not content:
+            raise ValueError("Spark API returned an empty answer.")
+
+        if stop:
+            for token in stop:
+                if token in content:
+                    content = content.split(token)[0]
+
+        return content
+
 
 st.set_page_config(page_title="智能销售数据查询助手", page_icon="📊")
 st.title("📊 智能销售数据查询助手")
@@ -29,7 +92,24 @@ if radio_opt.index(selected_opt) == 1:
 else:
     db_uri = LOCALDB
 
-openai_api_key = st.sidebar.text_input(label="OpenAI API Key", type="password")
+spark_api_key = st.sidebar.text_input(
+    label="讯飞 Spark API Key",
+    value=os.getenv("XF_APIKey", ""),
+    type="password",
+)
+spark_api_secret = st.sidebar.text_input(
+    label="讯飞 Spark API Secret",
+    value=os.getenv("XF_APISecret", ""),
+    type="password",
+)
+spark_model = st.sidebar.text_input(
+    label="Spark 模型名称",
+    value=os.getenv("XF_MODEL", "lite"),
+)
+spark_api_url = st.sidebar.text_input(
+    label="Spark 接口地址",
+    value=os.getenv("XF_URL", "https://spark-api-open.xf-yun.com/v1/chat/completions"),
+)
 
 st.sidebar.markdown("### 示例问题")
 st.sidebar.markdown("- 哪个客户累计消费最高？")
@@ -40,15 +120,21 @@ if not db_uri:
     st.info("请输入数据库连接 URI。")
     st.stop()
 
-if not openai_api_key:
-    st.info("请先填写 OpenAI API Key。")
+if not spark_api_key or not spark_api_secret:
+    st.info("请先填写 Spark API Key 和 API Secret。")
     st.stop()
 
-llm = OpenAI(openai_api_key=openai_api_key, temperature=0, streaming=True)
+llm = SparkLLM(
+    api_key=spark_api_key,
+    api_secret=spark_api_secret,
+    api_url=spark_api_url,
+    model=spark_model,
+    temperature=0.0,
+)
 
 
 @st.cache_resource(ttl="2h")
-def configure_db(db_uri):
+def configure_db(db_uri: str) -> SQLDatabase:
     if db_uri == LOCALDB:
         db_filepath = (Path(__file__).parent / "sales_demo.db").absolute()
         creator = lambda: sqlite3.connect(f"file:{db_filepath}?mode=ro", uri=True)
@@ -85,6 +171,9 @@ if user_query:
 
     with st.chat_message("assistant"):
         st_cb = StreamlitCallbackHandler(st.container())
-        response = agent.run(user_query, callbacks=[st_cb])
+        try:
+            response = agent.run(user_query, callbacks=[st_cb])
+        except Exception as exc:
+            response = f"查询失败：{exc}"
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.write(response)
